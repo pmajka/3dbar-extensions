@@ -26,6 +26,7 @@
 import sys,os
 from optparse import OptionParser,OptionGroup
 import random 
+from scipy import ndimage
 import numpy, vtk, nifti
 import bar
 
@@ -120,7 +121,7 @@ def imageDataFromNumpy(npArr, spacing, origin, shape, dims=1, outputFilename = N
     print >>sys.stderr, "\timageDataFrom3dRGBNumpyArr: done."
     return cast2.GetOutput()
 
-def appendSingleMask(idxArray, rgbArray, groupElem, niftiVolume, threshold = 128):
+def appendSingleMask(idxArray, rgbArray, groupElem, niftiVolume, threshold = 128, sigma = (0,0,0)):
     i = niftiVolume
     id = long(groupElem.id)
     color = getColor(groupElem)
@@ -129,8 +130,10 @@ def appendSingleMask(idxArray, rgbArray, groupElem, niftiVolume, threshold = 128
     print >>sys.stderr, "\tappendSingleMask: group name: %s" % groupElem.name
     print >>sys.stderr, "\tappendSingleMask: group id: %s" % groupElem.id
     print >>sys.stderr, "\tappendSingleMask: group fill: %s / %s" % (groupElem.fill, " ".join(map(str,color)))
+    print >>sys.stderr, "\tappendSingleMask: Convolving with gaussian kernel: "  + str(sigma)
     
     temp = i.data
+    temp = ndimage.filters.gaussian_filter(temp, sigma=sigma)
     temp[temp < threshold] = False
     temp[temp >= threshold] = True
     
@@ -147,6 +150,7 @@ def mergeVolumes(options, args, idx):
     outputRGBFilename = options.outputrgbvolume
     outputIndexedFilename = options.outputindexedvolume
     threshold = options.threshold
+    sigma = options.gaussiankernel
     volumesDir = args[1]
     groupsToMerge = args[2:]
     idxArray = None
@@ -168,7 +172,7 @@ def mergeVolumes(options, args, idx):
             o  = niftiVolume.header['qoffset']
             p  = niftiVolume.header['pixdim'][1:4]
             
-            idxArray = numpy.zeros((ds[0],ds[1],ds[2]), dtype=numpy.uint8)
+            idxArray = numpy.zeros((ds[0],ds[1],ds[2]))
             rgbArray = numpy.zeros((ds[0],ds[1],ds[2],3), dtype=numpy.uint8)
             
             print >>sys.stderr, "\tMain loop: volume shape: %d %d %d" % ds
@@ -176,7 +180,8 @@ def mergeVolumes(options, args, idx):
             print >>sys.stderr, "\tMain loop: volume dimensions: %d %d %d" % tuple(p)
         
         print >>sys.stderr, "\tMain loop: Merging volumes..."
-        appendSingleMask(idxArray, rgbArray, groupElem, niftiVolume, threshold=threshold)
+        appendSingleMask(idxArray, rgbArray, groupElem, niftiVolume,\
+                threshold=threshold, sigma=sigma)
         
     if outputRGBFilename:
         print >>sys.stderr, "\tMain loop: Converting to rgb vtkImageData..."
@@ -213,7 +218,7 @@ def createOptionParser():
     parser.add_option("-c", "--outputrgbvolume", dest="outputrgbvolume",
             action="store", default=None,
             help="Output rgb volume filename.")
-
+    
     parser.add_option("-l", "--outputlut", dest="outputLutFilename",
             action="store", default=None,
             help="Output lookup table filename.")
@@ -221,6 +226,10 @@ def createOptionParser():
     parser.add_option("-t", "--maskthreshold", dest="threshold",
             action="store", default=128, type="int",
             help="Threshold level that will be applided to each mask before merging. Default value: 128")
+    
+    parser.add_option('-g', '--gaussian-smooth', type='float', nargs=3, dest='gaussiankernel',
+                      default=(0.0, 0.0, 0.0),
+                      help='Apply gaussian smoothing to each mask before thresholding and merging.')
     
     parser.add_option("-m", "--maskfilenametemplate", dest="maskfilenametemplate",
             action="store", default='volume_%s.nii.gz',
@@ -231,6 +240,10 @@ def createOptionParser():
 if __name__ == '__main__':
     parser = createOptionParser()
     (options, args) = parser.parse_args()
+    
+    if len(args) == 0:
+        parser.print_help()
+        exit()
     
     barpath  = args[0]
     indexer = bar.barIndexer.fromXML(barpath)
